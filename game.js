@@ -481,10 +481,19 @@ let stopFlag = false;
 function noopStop(cell) { if (cell.type === 'brick') stopFlag = true; }   // flag the first brick contact
 
 // ---- Layout -----------------------------------------------------------
-let dpr = 1;
-function resize() {
+let dpr = 1, lastAw = -1, lastAh = -1;
+function stageSize() {
   const stage = $('stage');
-  const aw = stage.clientWidth, ah = stage.clientHeight;
+  let aw = stage.clientWidth, ah = stage.clientHeight;
+  if (!aw || !ah) {                       // layout not ready / flex quirk: fall back to the window
+    const hud = $('hud').offsetHeight || 56;
+    aw = window.innerWidth; ah = Math.max(100, window.innerHeight - hud);
+  }
+  return [aw, ah];
+}
+function resize() {
+  const [aw, ah] = stageSize();
+  lastAw = aw; lastAh = ah;
   scale = Math.min(aw / W, ah / H);
   dpr = Math.min(window.devicePixelRatio || 1, 3);
   canvas.style.width = W * scale + 'px'; canvas.style.height = H * scale + 'px';
@@ -537,14 +546,25 @@ $('play-hard').addEventListener('click', () => newGame(true));
 
 // ---- Main loop --------------------------------------------------------
 let last = 0, acc = 0;
+function showError(msg) {
+  let el = document.getElementById('err');
+  if (!el) { el = document.createElement('pre'); el.id = 'err'; el.style.cssText = 'position:fixed;left:0;right:0;bottom:0;margin:0;padding:8px;background:#600;color:#fff;font:11px monospace;white-space:pre-wrap;z-index:99'; document.body.appendChild(el); }
+  el.textContent = msg;
+}
+window.addEventListener('error', e => showError('Error: ' + e.message + ' @' + (e.lineno || '?')));
 function frame(t) {
+  requestAnimationFrame(frame);
+  try { tick(t); } catch (e) { showError('Error: ' + e.message + '\n' + (e.stack || '').slice(0, 300)); }
+}
+function tick(t) {
+  const [aw, ah] = stageSize();
+  if (aw !== lastAw || ah !== lastAh) resize();
   const dt = Math.min(0.1, (t - last) / 1000 || 0); last = t;
   acc += dt * (fast ? 3 : 1);
   let n = 0;
   while (acc >= STEP && n++ < 2000) { update(STEP); acc -= STEP; }
   if (n >= 2000) acc = 0;
   draw();
-  requestAnimationFrame(frame);
 }
 
 resize();
