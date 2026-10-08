@@ -10,3 +10,4 @@ Static, dependency-free brick-shooter for mobile and desktop. Open `index.html` 
 **Acid blocks:** with more than 80 balls, some blocks (20%) are covered in acid. The first ball to touch one is dissolved for good, then it becomes a normal block.
 **Boss HP** = ball count × 8–17, with a 1-in-20 chance of ×18.
 **Hard mode** (pick it in the new-game dialog, ↻): acid from just 20 balls (35% of blocks), a boss every 2nd round, blocks with double HP, bosses never below round×20 HP, and more powerups. Designed to be near-impossible without powerups. Best score is tracked separately.
+**Hard mode update:** every 2nd block is acid (from 20 balls), block HP scales up faster with the round, rows have more blocks, and every 15th round a MEGA BOSS with 40× ball count HP appears (kill reward: +10 balls).

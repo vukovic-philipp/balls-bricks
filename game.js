@@ -25,6 +25,7 @@ const elSpeed = $('speed'), elRecall = $('recall'), overlay = $('overlay');
 let state;            // 'aim' | 'shoot' | 'gather' | 'over'
 let round, ballCount, launchX, best = 0, hard = false;
 let grid;             // grid[row][col] = {type:'brick',hp,flash} | {type:'ball'} | null
+let brickSeq = 0;    // counts spawned bricks (hard mode: every 2nd one is acid)
 let eaten = 0;      // balls dissolved by acid this shot (lost for good)
 let balls, toFire, fireTimer, landedX, shotTime, collected;
 let particles = [], effects = [], fast = false;
@@ -45,9 +46,9 @@ const cfg = () => hard ? CFG.hard : CFG.normal;
 function save() {
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify({
-      round, ballCount, launchX, hard,
+      round, ballCount, launchX, hard, brickSeq,
       grid: grid.map(r => r.map(c => c && (c.type === 'brick'
-        ? (c.boss ? { t: 'B', hp: c.hp, max: c.max, c0: c.c0 } : { t: 'b', hp: c.hp, a: c.acid ? 1 : 0 })
+        ? (c.boss ? { t: 'B', hp: c.hp, max: c.max, c0: c.c0, m: c.mega ? 1 : 0 } : { t: 'b', hp: c.hp, a: c.acid ? 1 : 0 })
         : c.type === 'power' ? { t: 'w', k: c.kind } : { t: 'p' })))
     }));
     localStorage.setItem(bestKey(), best);
@@ -57,12 +58,12 @@ function load() {
   try {
     const s = JSON.parse(localStorage.getItem(SAVE_KEY));
     if (!s || !Array.isArray(s.grid) || s.grid.length !== ROWS) return false;
-    round = s.round; ballCount = s.ballCount; launchX = s.launchX; hard = !!s.hard; loadBest();
+    round = s.round; ballCount = s.ballCount; launchX = s.launchX; hard = !!s.hard; brickSeq = s.brickSeq | 0; loadBest();
     const bosses = {};
     grid = s.grid.map((r, ri) => r.map(c => {
       if (!c) return null;
       if (c.t === 'b') return { type: 'brick', hp: c.hp, flash: 0, acid: !!c.a };
-      if (c.t === 'B') return bosses[ri + ':' + c.c0] || (bosses[ri + ':' + c.c0] = { type: 'brick', boss: true, w: 3, c0: c.c0, hp: c.hp, max: c.max, flash: 0 });
+      if (c.t === 'B') return bosses[ri + ':' + c.c0] || (bosses[ri + ':' + c.c0] = { type: 'brick', boss: true, mega: !!c.m, w: 3, c0: c.c0, hp: c.hp, max: c.max, flash: 0 });
       if (c.t === 'w') return { type: 'power', kind: c.k };
       return { type: 'ball' };
     }));
@@ -71,7 +72,7 @@ function load() {
 }
 
 function newGame(h) {
-  hard = !!h; loadBest();
+  hard = !!h; loadBest(); brickSeq = 0;
   round = 1; ballCount = 1; launchX = W / 2;
   grid = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
   spawnRow();
@@ -91,14 +92,15 @@ function updateHud() {
 
 // ---- Level generation -------------------------------------------------
 // Boss HP = ball count x 8..17, with a 1-in-20 chance of the full x18.
-function bossHp() {
+function bossHp(mega) {
+  if (mega) return Math.max(ballCount * 40, round * 40);   // hard mode: every 15th round, x40 ball count
   const mult = Math.random() < 1 / 20 ? 18 : 8 + (Math.random() * 10 | 0);
   const hp = ballCount * mult;
   return hard ? Math.max(hp, round * 20) : hp;   // hard: early bosses can't be trivial
 }
 
 const POWERS = ['bomb', 'hline', 'vline'];
-const isBossRound = () => round >= cfg().bossFrom && round % cfg().bossEvery === 0;
+const isBossRound = () => (hard && round % 15 === 0) || (round >= cfg().bossFrom && round % cfg().bossEvery === 0);
 // Damage dealt by powerups; scales with the round so they stay useful.
 const powerDamage = () => Math.max(3, Math.ceil(round * 0.6));
 
@@ -109,8 +111,9 @@ function spawnRow() {
   let free = [...Array(COLS).keys()];
   if (isBossRound()) {                             // wide boss block, 3 cells
     const c0 = rnd(COLS - 2);
-    const hp = bossHp();
-    const boss = { type: 'brick', boss: true, w: 3, c0, hp, max: hp, flash: 0 };
+    const mega = hard && round % 15 === 0;
+    const hp = bossHp(mega);
+    const boss = { type: 'brick', boss: true, mega, w: 3, c0, hp, max: hp, flash: 0 };
     for (let c = c0; c < c0 + 3; c++) row[c] = boss;
     free = free.filter(c => c < c0 || c >= c0 + 3);
     shuffle(free);
@@ -121,12 +124,13 @@ function spawnRow() {
   shuffle(free);
   row[free.pop()] = { type: 'ball' };              // guaranteed +1 ball
   if (round >= 2 && Math.random() < cfg().powerChance) row[free.pop()] = { type: 'power', kind: POWERS[rnd(POWERS.length)] };
-  const n = 2 + rnd(3);                            // 2-4 bricks, always leaves gaps
+  const n = hard ? 3 + rnd(2) : 2 + rnd(3);                            // 2-4 bricks, always leaves gaps
   for (let i = 0; i < n && free.length > 1; i++) {
     const c = free.pop();
-    const base = round * cfg().hpMul;
+    const base = Math.round(round * (cfg().hpMul + (hard ? round * 0.05 : 0)));   // hard: scales up with the round
     row[c] = { type: 'brick', hp: Math.random() < 0.12 ? base * 2 : base, flash: 0 };
-    if (ballCount > cfg().acidMin && Math.random() < cfg().acidChance) row[c].acid = true;
+    brickSeq++;
+    if (ballCount > cfg().acidMin && (hard ? brickSeq % 2 === 0 : Math.random() < cfg().acidChance)) row[c].acid = true;
   }
 }
 
@@ -269,7 +273,7 @@ function damage(r, c, n) {
   if (cell.hp > 0) return false;
   const cx = (cell.boss ? cell.c0 + cell.w / 2 : c + .5) * CELL;
   burst(cx, r * CELL + CELL / 2, color, cell.boss ? 40 : 10);
-  if (cell.boss) collected += 3;                  // boss reward
+  if (cell.boss) collected += cell.mega ? 10 : 3;                  // boss reward
   removeCell(r, c);
   return true;
 }
@@ -396,11 +400,11 @@ function draw() {
       if (c !== cell.c0) continue;              // draw the boss once, from its first cell
       const bx = x + PAD, bw = cell.w * CELL - 2 * PAD, by = y + PAD, bh = CELL - 2 * PAD;
       const g = ctx.createLinearGradient(bx, by, bx + bw, by + bh);
-      g.addColorStop(0, '#7b3fe4'); g.addColorStop(1, '#c04cd8');
+      if (cell.mega) { g.addColorStop(0, '#b3121b'); g.addColorStop(1, '#3a0a3f'); } else { g.addColorStop(0, '#7b3fe4'); g.addColorStop(1, '#c04cd8'); }
       ctx.fillStyle = g; roundRect(bx, by, bw, bh, 16); ctx.fill();
       ctx.strokeStyle = '#ffd24a'; ctx.lineWidth = 4; roundRect(bx + 2, by + 2, bw - 4, bh - 4, 14); ctx.stroke();
       if (cell.flash > 0) { ctx.fillStyle = 'rgba(255,255,255,' + cell.flash * .6 + ')'; roundRect(bx, by, bw, bh, 16); ctx.fill(); }
-      ctx.fillStyle = '#ffd24a'; ctx.font = '700 16px system-ui,sans-serif'; ctx.fillText('BOSS', bx + bw / 2, by + 16);
+      ctx.fillStyle = '#ffd24a'; ctx.font = '700 16px system-ui,sans-serif'; ctx.fillText(cell.mega ? 'MEGA BOSS' : 'BOSS', bx + bw / 2, by + 16);
       ctx.fillStyle = '#fff'; ctx.font = '800 44px system-ui,sans-serif'; ctx.fillText(cell.hp, bx + bw / 2, by + bh / 2 + 8);
       ctx.fillStyle = 'rgba(0,0,0,.4)'; ctx.fillRect(bx + 14, by + bh - 12, bw - 28, 6);
       ctx.fillStyle = '#ffd24a'; ctx.fillRect(bx + 14, by + bh - 12, (bw - 28) * Math.max(0, cell.hp / cell.max), 6);
