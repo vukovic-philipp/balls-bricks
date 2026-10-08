@@ -26,7 +26,8 @@ let round, ballCount, launchX, best = 0;
 let grid;             // grid[row][col] = {type:'brick',hp,flash} | {type:'ball'} | null
 let balls, toFire, fireTimer, landedX, shotTime, collected;
 let particles = [], fast = false;
-let aim = null;       // {sx, sy, x, y} in client px while dragging
+let aim = null;       // {x, y, id, t0x, t0y} while a finger is down
+let aimT = { x: W / 2, y: 300 };   // persistent aim point (world coords)
 let scale = 1;
 
 try { best = +localStorage.getItem(SAVE_KEY + ':best') || 0; } catch (e) {}
@@ -116,13 +117,14 @@ function fire(dx, dy) {
   elBalls.textContent = '0/' + ballCount;
 }
 
-// Direct aiming: the ball shoots towards the touch point. Releasing near/below the
-// floor line cancels the shot. Returns a unit {dx,dy} (dy<0 = up) or null.
-function aimVector(px, py) {
-  const rect = canvas.getBoundingClientRect();
-  const wx = (px - rect.left) / scale, wy = (py - rect.top) / scale;
-  const dx = wx - launchX, dy = (FLOOR - R) - wy;          // dy>0 = upward
-  if (dy < 60 || Math.hypot(dx, dy) < 60) return null;
+// Relative aiming: the aim point (aimT, world coords) persists between shots and is nudged by
+// finger movement, so it never jumps and the finger doesn't have to cover the target.
+function clampAimT() {
+  aimT.x = Math.max(0, Math.min(W, aimT.x));
+  aimT.y = Math.max(40, Math.min(FLOOR - 160, aimT.y));
+}
+function aimVector() {
+  const dx = aimT.x - launchX, dy = (FLOOR - R) - aimT.y;   // dy>0 = upward
   let a = Math.atan2(dy, dx);
   const lim = Math.asin(MIN_SIN * 1.4);
   a = Math.max(lim, Math.min(Math.PI - lim, a));
@@ -292,10 +294,7 @@ function draw() {
   }
 
   // aim preview
-  if (aim && state === 'aim') {
-    const v = aimVector(aim.x, aim.y);
-    if (v) drawPreview(v);
-  }
+  if (state === 'aim') drawPreview(aimVector());
 
   // balls
   ctx.fillStyle = '#fff';
@@ -357,18 +356,21 @@ window.addEventListener('orientationchange', () => setTimeout(resize, 150));
 const stageEl = $('stage');
 stageEl.addEventListener('pointerdown', e => {
   if (state !== 'aim' || aim) return;
-  aim = { x: e.clientX, y: e.clientY, id: e.pointerId };
+  aim = { x: e.clientX, y: e.clientY, id: e.pointerId, t0x: aimT.x, t0y: aimT.y };
   try { stageEl.setPointerCapture(e.pointerId); } catch (err) {}
   e.preventDefault();
 });
 stageEl.addEventListener('pointermove', e => {
-  if (aim && e.pointerId === aim.id) { aim.x = e.clientX; aim.y = e.clientY; e.preventDefault(); }
+  if (!aim || e.pointerId !== aim.id) return;
+  aimT.x = aim.t0x + (e.clientX - aim.x) / scale;
+  aimT.y = aim.t0y + (e.clientY - aim.y) / scale;
+  clampAimT();
+  e.preventDefault();
 });
 function release(e, cancel) {
   if (!aim || e.pointerId !== aim.id) return;
-  const v = !cancel && state === 'aim' ? aimVector(e.clientX, e.clientY) : null;
   aim = null;
-  if (v) fire(v.dx, v.dy);
+  if (!cancel && state === 'aim') { const v = aimVector(); fire(v.dx, v.dy); }
 }
 stageEl.addEventListener('pointerup', e => release(e, false));
 stageEl.addEventListener('pointercancel', e => release(e, true));
