@@ -315,19 +315,29 @@ function ball(x, y) { ctx.beginPath(); ctx.arc(x, y, R, 0, 6.283); ctx.fill(); }
 
 function drawPreview(v) {
   const g = { x: launchX, y: FLOOR - R, vx: v.dx * SPEED, vy: v.dy * SPEED };
-  ctx.fillStyle = 'rgba(255,255,255,.55)';
-  let travelled = 0, nextDot = 0;
-  for (let i = 0; i < 1400 && travelled < 1700; i++) {
+  let travelled = 0, nextDot = 0, hitAt = -1;
+  ctx.lineWidth = 3;
+  for (let i = 0; i < 2000 && travelled < 2200; i++) {
     const px = g.x, py = g.y;
+    stopFlag = false;
     const res = moveBall(g, 1 / 120, noopStop);
     travelled += Math.hypot(g.x - px, g.y - py);
-    if (travelled >= nextDot) { ctx.beginPath(); ctx.arc(g.x, g.y, 4, 0, 6.283); ctx.fill(); nextDot += 38; }
-    if (res === 'floor' || stopFlag) break;
+    if (stopFlag && hitAt < 0) {                       // first brick: mark impact, keep drawing the rebound
+      hitAt = travelled;
+      ctx.strokeStyle = '#ffd24a'; ctx.beginPath(); ctx.arc(g.x, g.y, R + 4, 0, 6.283); ctx.stroke();
+    }
+    if (res === 'floor') break;
+    if (hitAt >= 0 && travelled - hitAt > 350) break;  // rebound is only a hint
+    if (travelled >= nextDot) {
+      ctx.fillStyle = hitAt < 0 ? 'rgba(255,255,255,.9)' : 'rgba(255,210,74,.55)';
+      ctx.beginPath(); ctx.arc(g.x, g.y, hitAt < 0 ? 5 : 4, 0, 6.283); ctx.fill();
+      nextDot += 34;
+    }
   }
   stopFlag = false;
 }
 let stopFlag = false;
-function noopStop(cell) { if (cell.type === 'brick') stopFlag = true; }   // preview stops at the first brick
+function noopStop(cell) { if (cell.type === 'brick') stopFlag = true; }   // flag the first brick contact
 
 // ---- Layout -----------------------------------------------------------
 let dpr = 1;
