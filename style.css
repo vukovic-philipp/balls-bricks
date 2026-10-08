@@ -20,7 +20,10 @@ canvas { display:block; touch-action:none; }
 .card { background:var(--panel); padding:28px 32px; border-radius:18px; text-align:center; max-width:80vw; }
 .card h1 { margin:0 0 8px; font-size:28px; }
 .card p { margin:0 0 20px; color:var(--muted); white-space:pre-line; }
-#restart { background:var(--accent); font-size:18px; padding:12px 28px; }
+#play-normal, #play-hard { background:var(--accent); font-size:17px; padding:12px 22px; }
+#play-hard { background:#c0392b; }
+.btns { display:flex; gap:10px; justify-content:center; }
+.label.hard { color:#ff6b5a; }
 #reset { padding:8px 12px; min-width:44px; }
-#cancel { margin-left:10px; }
+#cancel { margin-top:12px; }
 #cancel[hidden] { display:none; }

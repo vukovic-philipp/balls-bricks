@@ -12,7 +12,7 @@
 <body>
 <div id="app">
   <header id="hud">
-    <div class="stat"><span class="label">Round</span><span id="round">1</span></div>
+    <div class="stat"><span class="label" id="mode">Round</span><span id="round">1</span></div>
     <div class="stat"><span class="label">Best</span><span id="best">0</span></div>
     <div class="stat"><span class="label">Balls</span><span id="balls">1</span></div>
     <button id="reset" aria-label="Reset game">↻</button>
@@ -24,7 +24,7 @@
     <div class="card">
       <h1 id="ov-title">Game over</h1>
       <p id="ov-text"></p>
-      <button id="restart">Play again</button>
+      <div class="btns"><button id="play-normal">Normal</button><button id="play-hard">Hard 🔥</button></div>
       <button id="cancel" hidden>Cancel</button>
     </div>
   </div>

@@ -17,12 +17,13 @@ const SAVE_KEY = 'balls-bricks-v1';
 
 const $ = id => document.getElementById(id);
 const canvas = $('game'), ctx = canvas.getContext('2d');
-const elRound = $('round'), elBest = $('best'), elBalls = $('balls');
+const elTitle = $('ov-title'), elText = $('ov-text'), elCancel = $('cancel');
+const elMode = $('mode'), elRound = $('round'), elBest = $('best'), elBalls = $('balls');
 const elSpeed = $('speed'), elRecall = $('recall'), overlay = $('overlay');
 
 // ---- State -----------------------------------------------------------
 let state;            // 'aim' | 'shoot' | 'gather' | 'over'
-let round, ballCount, launchX, best = 0;
+let round, ballCount, launchX, best = 0, hard = false;
 let grid;             // grid[row][col] = {type:'brick',hp,flash} | {type:'ball'} | null
 let eaten = 0;      // balls dissolved by acid this shot (lost for good)
 let balls, toFire, fireTimer, landedX, shotTime, collected;
@@ -31,25 +32,32 @@ let aim = null;       // {id} while a finger is down
 let aimT = { x: W / 2, y: 300 };   // persistent aim point (world coords)
 let scale = 1;
 
-try { best = +localStorage.getItem(SAVE_KEY + ':best') || 0; } catch (e) {}
+const bestKey = () => SAVE_KEY + (hard ? ':best-hard' : ':best');
+function loadBest() { try { best = +localStorage.getItem(bestKey()) || 0; } catch (e) { best = 0; } }
+// Difficulty settings. Hard: acid from 20 balls, a boss every 2nd round, tougher blocks, more powerups.
+const CFG = {
+  normal: { acidMin: 80, acidChance: 0.2,  bossEvery: 5, bossFrom: 5, hpMul: 1, powerChance: 0.3 },
+  hard:   { acidMin: 20, acidChance: 0.35, bossEvery: 2, bossFrom: 2, hpMul: 2, powerChance: 0.5 }
+};
+const cfg = () => hard ? CFG.hard : CFG.normal;
 
 // ---- Persistence (mobile browsers kill background tabs) --------------
 function save() {
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify({
-      round, ballCount, launchX,
+      round, ballCount, launchX, hard,
       grid: grid.map(r => r.map(c => c && (c.type === 'brick'
         ? (c.boss ? { t: 'B', hp: c.hp, max: c.max, c0: c.c0 } : { t: 'b', hp: c.hp, a: c.acid ? 1 : 0 })
         : c.type === 'power' ? { t: 'w', k: c.kind } : { t: 'p' })))
     }));
-    localStorage.setItem(SAVE_KEY + ':best', best);
+    localStorage.setItem(bestKey(), best);
   } catch (e) {}
 }
 function load() {
   try {
     const s = JSON.parse(localStorage.getItem(SAVE_KEY));
     if (!s || !Array.isArray(s.grid) || s.grid.length !== ROWS) return false;
-    round = s.round; ballCount = s.ballCount; launchX = s.launchX;
+    round = s.round; ballCount = s.ballCount; launchX = s.launchX; hard = !!s.hard; loadBest();
     const bosses = {};
     grid = s.grid.map((r, ri) => r.map(c => {
       if (!c) return null;
@@ -62,7 +70,8 @@ function load() {
   } catch (e) { return false; }
 }
 
-function newGame() {
+function newGame(h) {
+  hard = !!h; loadBest();
   round = 1; ballCount = 1; launchX = W / 2;
   grid = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
   spawnRow();
@@ -76,6 +85,7 @@ function startAim() {
 }
 
 function updateHud() {
+  elMode.textContent = hard ? 'Round · HARD' : 'Round'; elMode.classList.toggle('hard', hard);
   elRound.textContent = round; elBest.textContent = best; elBalls.textContent = ballCount;
 }
 
@@ -83,12 +93,12 @@ function updateHud() {
 // Boss HP = ball count x 8..17, with a 1-in-20 chance of the full x18.
 function bossHp() {
   const mult = Math.random() < 1 / 20 ? 18 : 8 + (Math.random() * 10 | 0);
-  return ballCount * mult;
+  const hp = ballCount * mult;
+  return hard ? Math.max(hp, round * 20) : hp;   // hard: early bosses can't be trivial
 }
-const ACID_MIN_BALLS = 80, ACID_CHANCE = 0.2;
 
 const POWERS = ['bomb', 'hline', 'vline'];
-const isBossRound = () => round >= 5 && round % 5 === 0;
+const isBossRound = () => round >= cfg().bossFrom && round % cfg().bossEvery === 0;
 // Damage dealt by powerups; scales with the round so they stay useful.
 const powerDamage = () => Math.max(3, Math.ceil(round * 0.6));
 
@@ -110,12 +120,13 @@ function spawnRow() {
   }
   shuffle(free);
   row[free.pop()] = { type: 'ball' };              // guaranteed +1 ball
-  if (round >= 2 && Math.random() < 0.3) row[free.pop()] = { type: 'power', kind: POWERS[rnd(POWERS.length)] };
+  if (round >= 2 && Math.random() < cfg().powerChance) row[free.pop()] = { type: 'power', kind: POWERS[rnd(POWERS.length)] };
   const n = 2 + rnd(3);                            // 2-4 bricks, always leaves gaps
   for (let i = 0; i < n && free.length > 1; i++) {
     const c = free.pop();
-    row[c] = { type: 'brick', hp: Math.random() < 0.12 ? round * 2 : round, flash: 0 };
-    if (ballCount > ACID_MIN_BALLS && Math.random() < ACID_CHANCE) row[c].acid = true;
+    const base = round * cfg().hpMul;
+    row[c] = { type: 'brick', hp: Math.random() < 0.12 ? base * 2 : base, flash: 0 };
+    if (ballCount > cfg().acidMin && Math.random() < cfg().acidChance) row[c].acid = true;
   }
 }
 
@@ -136,11 +147,10 @@ function advanceRound() {
 function gameOver() {
   state = 'over';
   best = Math.max(best, round - 1);
-  try { localStorage.removeItem(SAVE_KEY); localStorage.setItem(SAVE_KEY + ':best', best); } catch (e) {}
+  try { localStorage.removeItem(SAVE_KEY); localStorage.setItem(bestKey(), best); } catch (e) {}
   updateHud();
-  $('ov-title').textContent = 'Game over';
   $('ov-text').textContent = 'You survived ' + (round - 1) + ' rounds\nBest: ' + best;
-  $('restart').textContent = 'Play again'; $('cancel').hidden = true;
+  elTitle.textContent = 'Game over'; $('cancel').hidden = true;
   overlay.hidden = false;
 }
 
@@ -516,14 +526,14 @@ document.addEventListener('touchmove', e => e.preventDefault(), { passive: false
 
 elSpeed.addEventListener('click', () => { fast = !fast; elSpeed.textContent = fast ? '3×' : '1×'; elSpeed.classList.toggle('on', fast); });
 elRecall.addEventListener('click', recall);
-const elTitle = $('ov-title'), elText = $('ov-text'), elRestart = $('restart'), elCancel = $('cancel');
 $('reset').addEventListener('click', () => {
   if (state === 'over') return;
-  elTitle.textContent = 'Reset game?'; elText.textContent = 'Your current run will be lost.';
-  elRestart.textContent = 'Reset'; elCancel.hidden = false; overlay.hidden = false;
+  elTitle.textContent = 'New game?'; elText.textContent = 'Your current run will be lost.';
+  elCancel.hidden = false; overlay.hidden = false;
 });
 elCancel.addEventListener('click', () => { overlay.hidden = true; });
-elRestart.addEventListener('click', newGame);
+$('play-normal').addEventListener('click', () => newGame(false));
+$('play-hard').addEventListener('click', () => newGame(true));
 
 // ---- Main loop --------------------------------------------------------
 let last = 0, acc = 0;
@@ -538,7 +548,7 @@ function frame(t) {
 }
 
 resize();
-if (!load()) newGame(); else startAim();
+if (!load()) { loadBest(); newGame(false); } else startAim();
 updateHud();
 requestAnimationFrame(frame);
 })();
