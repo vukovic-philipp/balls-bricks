@@ -15,7 +15,7 @@ const MIN_PULL = 24;                              // px of drag needed to aim
 const MAX_STEP_DIST = R * 0.5;                    // sub-step cap so nothing tunnels
 const SAVE_KEY = 'balls-bricks-v1';
 
-const $ = id => document.getElementById(id);
+const $ = id => document.getElementById(id) || document.createElement('div');
 const canvas = $('game'), ctx = canvas.getContext('2d');
 const elTitle = $('ov-title'), elText = $('ov-text'), elCancel = $('cancel');
 const elMode = $('mode'), elRound = $('round'), elBest = $('best'), elBalls = $('balls');
