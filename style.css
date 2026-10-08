@@ -21,3 +21,6 @@ canvas { display:block; touch-action:none; }
 .card h1 { margin:0 0 8px; font-size:28px; }
 .card p { margin:0 0 20px; color:var(--muted); white-space:pre-line; }
 #restart { background:var(--accent); font-size:18px; padding:12px 28px; }
+#reset { padding:8px 12px; min-width:44px; }
+#cancel { margin-left:10px; }
+#cancel[hidden] { display:none; }

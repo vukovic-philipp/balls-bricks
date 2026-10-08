@@ -25,7 +25,7 @@ let state;            // 'aim' | 'shoot' | 'gather' | 'over'
 let round, ballCount, launchX, best = 0;
 let grid;             // grid[row][col] = {type:'brick',hp,flash} | {type:'ball'} | null
 let balls, toFire, fireTimer, landedX, shotTime, collected;
-let particles = [], fast = false;
+let particles = [], effects = [], fast = false;
 let aim = null;       // {id} while a finger is down
 let aimT = { x: W / 2, y: 300 };   // persistent aim point (world coords)
 let scale = 1;
@@ -37,7 +37,9 @@ function save() {
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify({
       round, ballCount, launchX,
-      grid: grid.map(r => r.map(c => c && (c.type === 'brick' ? { t: 'b', hp: c.hp } : { t: 'p' })))
+      grid: grid.map(r => r.map(c => c && (c.type === 'brick'
+        ? (c.boss ? { t: 'B', hp: c.hp, max: c.max, c0: c.c0 } : { t: 'b', hp: c.hp })
+        : c.type === 'power' ? { t: 'w', k: c.kind } : { t: 'p' })))
     }));
     localStorage.setItem(SAVE_KEY + ':best', best);
   } catch (e) {}
@@ -47,7 +49,14 @@ function load() {
     const s = JSON.parse(localStorage.getItem(SAVE_KEY));
     if (!s || !Array.isArray(s.grid) || s.grid.length !== ROWS) return false;
     round = s.round; ballCount = s.ballCount; launchX = s.launchX;
-    grid = s.grid.map(r => r.map(c => c && (c.t === 'b' ? { type: 'brick', hp: c.hp, flash: 0 } : { type: 'ball' })));
+    const bosses = {};
+    grid = s.grid.map((r, ri) => r.map(c => {
+      if (!c) return null;
+      if (c.t === 'b') return { type: 'brick', hp: c.hp, flash: 0 };
+      if (c.t === 'B') return bosses[ri + ':' + c.c0] || (bosses[ri + ':' + c.c0] = { type: 'brick', boss: true, w: 3, c0: c.c0, hp: c.hp, max: c.max, flash: 0 });
+      if (c.t === 'w') return { type: 'power', kind: c.k };
+      return { type: 'ball' };
+    }));
     return true;
   } catch (e) { return false; }
 }
@@ -60,8 +69,8 @@ function newGame() {
 }
 
 function startAim() {
-  state = 'aim'; balls = []; toFire = 0; collected = 0; shotTime = 0;
-  overlay.hidden = true; elRecall.hidden = true;
+  state = 'aim'; balls = []; particles = []; effects = []; toFire = 0; collected = 0; shotTime = 0;
+  overlay.hidden = true; $('cancel').hidden = true; elRecall.hidden = true;
   updateHud(); save();
 }
 
@@ -70,14 +79,30 @@ function updateHud() {
 }
 
 // ---- Level generation -------------------------------------------------
+const POWERS = ['bomb', 'hline', 'vline'];
+const isBossRound = () => round >= 5 && round % 5 === 0;
+// Damage dealt by powerups; scales with the round so they stay useful.
+const powerDamage = () => Math.max(3, Math.ceil(round * 0.6));
+
 function spawnRow() {
   const row = grid[0];
-  const free = [...Array(COLS).keys()];
-  const shuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = Math.random() * (i + 1) | 0; [a[i], a[j]] = [a[j], a[i]]; } return a; };
+  const rnd = n => Math.random() * n | 0;
+  const shuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = rnd(i + 1); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+  let free = [...Array(COLS).keys()];
+  if (isBossRound()) {                             // wide boss block, 3 cells
+    const c0 = rnd(COLS - 2);
+    const boss = { type: 'brick', boss: true, w: 3, c0, hp: round * 8, max: round * 8, flash: 0 };
+    for (let c = c0; c < c0 + 3; c++) row[c] = boss;
+    free = free.filter(c => c < c0 || c >= c0 + 3);
+    shuffle(free);
+    row[free.pop()] = { type: 'ball' };
+    if (free.length && Math.random() < 0.5) row[free.pop()] = { type: 'power', kind: POWERS[rnd(POWERS.length)] };
+    return;
+  }
   shuffle(free);
-  const pickup = free.pop();                      // guaranteed +1 ball
-  row[pickup] = { type: 'ball' };
-  const n = 2 + (Math.random() * 3 | 0);          // 2-4 bricks, always leaves gaps
+  row[free.pop()] = { type: 'ball' };              // guaranteed +1 ball
+  if (round >= 2 && Math.random() < 0.3) row[free.pop()] = { type: 'power', kind: POWERS[rnd(POWERS.length)] };
+  const n = 2 + rnd(3);                            // 2-4 bricks, always leaves gaps
   for (let i = 0; i < n && free.length > 1; i++) {
     const c = free.pop();
     row[c] = { type: 'brick', hp: Math.random() < 0.12 ? round * 2 : round, flash: 0 };
@@ -102,7 +127,9 @@ function gameOver() {
   best = Math.max(best, round - 1);
   try { localStorage.removeItem(SAVE_KEY); localStorage.setItem(SAVE_KEY + ':best', best); } catch (e) {}
   updateHud();
+  $('ov-title').textContent = 'Game over';
   $('ov-text').textContent = 'You survived ' + (round - 1) + ' rounds\nBest: ' + best;
+  $('restart').textContent = 'Play again'; $('cancel').hidden = true;
   overlay.hidden = false;
 }
 
@@ -139,6 +166,7 @@ function moveBall(b, dt, onCell) {
   const n = Math.max(1, Math.ceil(dist / MAX_STEP_DIST));
   const h = dt / n;
   for (let i = 0; i < n; i++) {
+    stepId++;
     b.x += b.vx * h; b.y += b.vy * h;
 
     if (b.x < R) { b.x = R; b.vx = Math.abs(b.vx); }
@@ -151,11 +179,15 @@ function moveBall(b, dt, onCell) {
     for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
       const cell = grid[r][c];
       if (!cell) continue;
-      if (cell.type === 'ball') {
+      if (cell.type === 'ball' || cell.type === 'power') {
         // pickup: circle of radius ~18 at cell centre
         const px = c * CELL + CELL / 2, py = r * CELL + CELL / 2;
         if (Math.hypot(b.x - px, b.y - py) < R + 18) onCell(cell, r, c);
         continue;
+      }
+      if (cell.boss) {                       // one boss spans 3 cells: collide once per sub-step
+        if (cell.stamp === stepId) continue;
+        cell.stamp = stepId;
       }
       collideBrick(b, cell, r, c, onCell);
     }
@@ -163,9 +195,11 @@ function moveBall(b, dt, onCell) {
   return null;
 }
 
+let stepId = 0;
 const PAD = 4; // visual gap around bricks
 function collideBrick(b, cell, r, c, onCell) {
-  const x0 = c * CELL + PAD, x1 = (c + 1) * CELL - PAD, y0 = r * CELL + PAD, y1 = (r + 1) * CELL - PAD;
+  const cs = cell.boss ? cell.c0 : c, cw = cell.boss ? cell.w : 1;
+  const x0 = cs * CELL + PAD, x1 = (cs + cw) * CELL - PAD, y0 = r * CELL + PAD, y1 = (r + 1) * CELL - PAD;
   const cx = Math.max(x0, Math.min(b.x, x1)), cy = Math.max(y0, Math.min(b.y, y1));
   let dx = b.x - cx, dy = b.y - cy;
   const d2 = dx * dx + dy * dy;
@@ -197,16 +231,54 @@ function normalise(b) {
   b.vx = ux * SPEED; b.vy = uy * SPEED;
 }
 
+function removeCell(r, c) {
+  const cell = grid[r][c];
+  if (!cell) return;
+  if (cell.boss) for (let k = cell.c0; k < cell.c0 + cell.w; k++) grid[r][k] = null;
+  else grid[r][c] = null;
+}
+
+// Apply n damage to the brick at (r,c); returns true if it was destroyed.
+function damage(r, c, n) {
+  const cell = grid[r] && grid[r][c];
+  if (!cell || cell.type !== 'brick') return false;
+  const color = cell.boss ? '#ffd24a' : brickColor(cell.hp);
+  cell.hp -= n; cell.flash = 1;
+  if (cell.hp > 0) return false;
+  const cx = (cell.boss ? cell.c0 + cell.w / 2 : c + .5) * CELL;
+  burst(cx, r * CELL + CELL / 2, color, cell.boss ? 40 : 10);
+  if (cell.boss) collected += 3;                  // boss reward
+  removeCell(r, c);
+  return true;
+}
+
+function fx(x, y, w, h, color) { effects.push({ x, y, w, h, color, life: .35 }); }
+
+function triggerPower(kind, r, c) {
+  const d = powerDamage();
+  const cx = c * CELL, cy = r * CELL;
+  if (kind === 'bomb') {
+    fx(cx - CELL, cy - CELL, 3 * CELL, 3 * CELL, '255,150,60');
+    for (let rr = r - 1; rr <= r + 1; rr++) for (let cc = c - 1; cc <= c + 1; cc++)
+      if (rr >= 0 && rr < ROWS && cc >= 0 && cc < COLS) damage(rr, cc, d);
+  } else if (kind === 'hline') {
+    fx(0, cy, W, CELL, '90,200,255');
+    for (let cc = 0; cc < COLS; cc++) damage(r, cc, d);
+  } else {
+    fx(cx, 0, CELL, ROWS * CELL, '190,120,255');
+    for (let rr = 0; rr < ROWS; rr++) damage(rr, c, d);
+  }
+}
+
 function onRealHit(cell, r, c) {
   if (cell.type === 'ball') { grid[r][c] = null; collected++; return; }
-  const color = brickColor(cell.hp);
-  cell.hp--; cell.flash = 1;
-  if (cell.hp <= 0) { burst(c * CELL + CELL / 2, r * CELL + CELL / 2, color); grid[r][c] = null; }
+  if (cell.type === 'power') { grid[r][c] = null; triggerPower(cell.kind, r, c); return; }
+  damage(r, c, 1);
 }
 const noop = () => {};
 
-function burst(x, y, color) {
-  for (let i = 0; i < 10; i++) {
+function burst(x, y, color, n = 10) {
+  for (let i = 0; i < n; i++) {
     const a = Math.random() * 6.283, s = 150 + Math.random() * 250;
     particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: .5, color });
   }
@@ -241,6 +313,7 @@ function update(dt) {
     if (done || gatherT > 0.6) { launchX = Math.max(R, Math.min(W - R, landedX)); advanceRound(); }
   }
   for (let r = 0; r < ROWS; r++) for (const c of grid[r]) if (c && c.flash > 0) c.flash = Math.max(0, c.flash - dt * 6);
+  for (let i = effects.length - 1; i >= 0; i--) if ((effects[i].life -= dt) <= 0) effects.splice(i, 1);
   for (let i = particles.length - 1; i >= 0; i--) {
     const p = particles[i]; p.life -= dt; p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 900 * dt;
     if (p.life <= 0) particles.splice(i, 1);
@@ -285,6 +358,21 @@ function draw() {
       ctx.strokeStyle = '#7dffb0'; ctx.lineWidth = 5;
       ctx.beginPath(); ctx.arc(x + CELL / 2, y + CELL / 2, 17, 0, 6.283); ctx.stroke();
       ctx.fillStyle = '#7dffb0'; ctx.beginPath(); ctx.arc(x + CELL / 2, y + CELL / 2, 7, 0, 6.283); ctx.fill();
+    } else if (cell.type === 'power') {
+      drawPower(cell.kind, x + CELL / 2, y + CELL / 2);
+    } else if (cell.boss) {
+      if (c !== cell.c0) continue;              // draw the boss once, from its first cell
+      const bx = x + PAD, bw = cell.w * CELL - 2 * PAD, by = y + PAD, bh = CELL - 2 * PAD;
+      const g = ctx.createLinearGradient(bx, by, bx + bw, by + bh);
+      g.addColorStop(0, '#7b3fe4'); g.addColorStop(1, '#c04cd8');
+      ctx.fillStyle = g; roundRect(bx, by, bw, bh, 16); ctx.fill();
+      ctx.strokeStyle = '#ffd24a'; ctx.lineWidth = 4; roundRect(bx + 2, by + 2, bw - 4, bh - 4, 14); ctx.stroke();
+      if (cell.flash > 0) { ctx.fillStyle = 'rgba(255,255,255,' + cell.flash * .6 + ')'; roundRect(bx, by, bw, bh, 16); ctx.fill(); }
+      ctx.fillStyle = '#ffd24a'; ctx.font = '700 16px system-ui,sans-serif'; ctx.fillText('BOSS', bx + bw / 2, by + 16);
+      ctx.fillStyle = '#fff'; ctx.font = '800 44px system-ui,sans-serif'; ctx.fillText(cell.hp, bx + bw / 2, by + bh / 2 + 8);
+      ctx.fillStyle = 'rgba(0,0,0,.4)'; ctx.fillRect(bx + 14, by + bh - 12, bw - 28, 6);
+      ctx.fillStyle = '#ffd24a'; ctx.fillRect(bx + 14, by + bh - 12, (bw - 28) * Math.max(0, cell.hp / cell.max), 6);
+      ctx.font = '700 38px system-ui,sans-serif';
     } else {
       ctx.fillStyle = brickColor(cell.hp);
       roundRect(x + PAD, y + PAD, CELL - 2 * PAD, CELL - 2 * PAD, 12); ctx.fill();
@@ -292,6 +380,8 @@ function draw() {
       ctx.fillStyle = 'rgba(0,0,0,.65)'; ctx.fillText(cell.hp, x + CELL / 2, y + CELL / 2 + 2);
     }
   }
+
+  for (const f of effects) { ctx.fillStyle = 'rgba(' + f.color + ',' + (f.life / .35 * .5) + ')'; ctx.fillRect(f.x, f.y, f.w, f.h); }
 
   // aim preview
   if (state === 'aim') drawPreview(aimVector());
@@ -309,6 +399,13 @@ function draw() {
 
   for (const p of particles) { ctx.globalAlpha = Math.max(0, p.life * 2); ctx.fillStyle = p.color; ctx.fillRect(p.x - 3, p.y - 3, 6, 6); }
   ctx.globalAlpha = 1;
+}
+const POWER_STYLE = { bomb: ['#ff9a3c', '✸'], hline: ['#5ac8ff', '↔'], vline: ['#be78ff', '↕'] };
+function drawPower(kind, x, y) {
+  const [color, glyph] = POWER_STYLE[kind];
+  ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, 26, 0, 6.283); ctx.fill();
+  ctx.fillStyle = '#12141f'; ctx.font = '700 34px system-ui,sans-serif'; ctx.fillText(glyph, x, y + 2);
+  ctx.font = '700 38px system-ui,sans-serif';
 }
 function ball(x, y) { ctx.beginPath(); ctx.arc(x, y, R, 0, 6.283); ctx.fill(); }
 
@@ -387,7 +484,14 @@ document.addEventListener('touchmove', e => e.preventDefault(), { passive: false
 
 elSpeed.addEventListener('click', () => { fast = !fast; elSpeed.textContent = fast ? '3×' : '1×'; elSpeed.classList.toggle('on', fast); });
 elRecall.addEventListener('click', recall);
-$('restart').addEventListener('click', newGame);
+const elTitle = $('ov-title'), elText = $('ov-text'), elRestart = $('restart'), elCancel = $('cancel');
+$('reset').addEventListener('click', () => {
+  if (state === 'over') return;
+  elTitle.textContent = 'Reset game?'; elText.textContent = 'Your current run will be lost.';
+  elRestart.textContent = 'Reset'; elCancel.hidden = false; overlay.hidden = false;
+});
+elCancel.addEventListener('click', () => { overlay.hidden = true; });
+elRestart.addEventListener('click', newGame);
 
 // ---- Main loop --------------------------------------------------------
 let last = 0, acc = 0;
