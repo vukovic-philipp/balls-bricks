@@ -7,3 +7,5 @@ Static, dependency-free brick-shooter for mobile and desktop. Open `index.html` 
 **Powerups** (hit them with a ball): 💥 orange = bomb (3×3 area), blue ↔ = whole row, purple ↕ = whole column. Damage scales with the round.
 **Bosses:** every 5th round a wide boss block with lots of HP appears; killing it gives +3 balls.
 **Reset:** the ↻ button in the top bar (asks for confirmation).
+**Acid blocks:** with more than 80 balls, some blocks (20%) are covered in acid. The first ball to touch one is dissolved for good, then it becomes a normal block.
+**Boss HP** = ball count × 8–17, with a 1-in-20 chance of ×18.

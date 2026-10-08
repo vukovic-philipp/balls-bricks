@@ -24,6 +24,7 @@ const elSpeed = $('speed'), elRecall = $('recall'), overlay = $('overlay');
 let state;            // 'aim' | 'shoot' | 'gather' | 'over'
 let round, ballCount, launchX, best = 0;
 let grid;             // grid[row][col] = {type:'brick',hp,flash} | {type:'ball'} | null
+let eaten = 0;      // balls dissolved by acid this shot (lost for good)
 let balls, toFire, fireTimer, landedX, shotTime, collected;
 let particles = [], effects = [], fast = false;
 let aim = null;       // {id} while a finger is down
@@ -38,7 +39,7 @@ function save() {
     localStorage.setItem(SAVE_KEY, JSON.stringify({
       round, ballCount, launchX,
       grid: grid.map(r => r.map(c => c && (c.type === 'brick'
-        ? (c.boss ? { t: 'B', hp: c.hp, max: c.max, c0: c.c0 } : { t: 'b', hp: c.hp })
+        ? (c.boss ? { t: 'B', hp: c.hp, max: c.max, c0: c.c0 } : { t: 'b', hp: c.hp, a: c.acid ? 1 : 0 })
         : c.type === 'power' ? { t: 'w', k: c.kind } : { t: 'p' })))
     }));
     localStorage.setItem(SAVE_KEY + ':best', best);
@@ -52,7 +53,7 @@ function load() {
     const bosses = {};
     grid = s.grid.map((r, ri) => r.map(c => {
       if (!c) return null;
-      if (c.t === 'b') return { type: 'brick', hp: c.hp, flash: 0 };
+      if (c.t === 'b') return { type: 'brick', hp: c.hp, flash: 0, acid: !!c.a };
       if (c.t === 'B') return bosses[ri + ':' + c.c0] || (bosses[ri + ':' + c.c0] = { type: 'brick', boss: true, w: 3, c0: c.c0, hp: c.hp, max: c.max, flash: 0 });
       if (c.t === 'w') return { type: 'power', kind: c.k };
       return { type: 'ball' };
@@ -79,6 +80,13 @@ function updateHud() {
 }
 
 // ---- Level generation -------------------------------------------------
+// Boss HP = ball count x 8..17, with a 1-in-20 chance of the full x18.
+function bossHp() {
+  const mult = Math.random() < 1 / 20 ? 18 : 8 + (Math.random() * 10 | 0);
+  return ballCount * mult;
+}
+const ACID_MIN_BALLS = 80, ACID_CHANCE = 0.2;
+
 const POWERS = ['bomb', 'hline', 'vline'];
 const isBossRound = () => round >= 5 && round % 5 === 0;
 // Damage dealt by powerups; scales with the round so they stay useful.
@@ -91,7 +99,8 @@ function spawnRow() {
   let free = [...Array(COLS).keys()];
   if (isBossRound()) {                             // wide boss block, 3 cells
     const c0 = rnd(COLS - 2);
-    const boss = { type: 'brick', boss: true, w: 3, c0, hp: round * 8, max: round * 8, flash: 0 };
+    const hp = bossHp();
+    const boss = { type: 'brick', boss: true, w: 3, c0, hp, max: hp, flash: 0 };
     for (let c = c0; c < c0 + 3; c++) row[c] = boss;
     free = free.filter(c => c < c0 || c >= c0 + 3);
     shuffle(free);
@@ -106,11 +115,13 @@ function spawnRow() {
   for (let i = 0; i < n && free.length > 1; i++) {
     const c = free.pop();
     row[c] = { type: 'brick', hp: Math.random() < 0.12 ? round * 2 : round, flash: 0 };
+    if (ballCount > ACID_MIN_BALLS && Math.random() < ACID_CHANCE) row[c].acid = true;
   }
 }
 
 function advanceRound() {
-  ballCount += collected;
+  ballCount = Math.max(1, ballCount + collected - eaten);
+  eaten = 0;
   round++;
   if (round - 1 > best) best = round - 1;
   // shift everything down one row; bottom row falling off the grid = game over
@@ -139,7 +150,7 @@ function fire(dx, dy) {
   const vx = dx / len * SPEED, vy = dy / len * SPEED;
   balls = [];
   for (let i = 0; i < ballCount; i++) balls.push({ x: launchX, y: FLOOR - R, vx, vy, active: false, landed: false, lx: 0 });
-  toFire = ballCount; fireTimer = 0; shotTime = 0; landedX = null; collected = 0;
+  toFire = ballCount; fireTimer = 0; shotTime = 0; landedX = null; collected = 0; eaten = 0;
   state = 'shoot';
   elBalls.textContent = '0/' + ballCount;
 }
@@ -182,7 +193,7 @@ function moveBall(b, dt, onCell) {
       if (cell.type === 'ball' || cell.type === 'power') {
         // pickup: circle of radius ~18 at cell centre
         const px = c * CELL + CELL / 2, py = r * CELL + CELL / 2;
-        if (Math.hypot(b.x - px, b.y - py) < R + 18) onCell(cell, r, c);
+        if (Math.hypot(b.x - px, b.y - py) < R + 18) onCell(cell, r, c, b);
         continue;
       }
       if (cell.boss) {                       // one boss spans 3 cells: collide once per sub-step
@@ -190,6 +201,7 @@ function moveBall(b, dt, onCell) {
         cell.stamp = stepId;
       }
       collideBrick(b, cell, r, c, onCell);
+      if (b.dead) return 'dead';
     }
   }
   return null;
@@ -217,7 +229,7 @@ function collideBrick(b, cell, r, c, onCell) {
   const dot = b.vx * nx + b.vy * ny;
   if (dot < 0) { b.vx -= 2 * dot * nx; b.vy -= 2 * dot * ny; }
   normalise(b);
-  onCell(cell, r, c);
+  onCell(cell, r, c, b);
 }
 
 // Keep speed constant and stop the ball getting trapped in near-horizontal travel.
@@ -270,9 +282,14 @@ function triggerPower(kind, r, c) {
   }
 }
 
-function onRealHit(cell, r, c) {
+function onRealHit(cell, r, c, b) {
   if (cell.type === 'ball') { grid[r][c] = null; collected++; return; }
   if (cell.type === 'power') { grid[r][c] = null; triggerPower(cell.kind, r, c); return; }
+  if (cell.acid) {                                  // acid eats this ball, then the block is normal
+    cell.acid = false; cell.flash = 1; b.dead = true; eaten++;
+    burst(b.x, b.y, '#8dff3c', 8);
+    return;
+  }
   damage(r, c, 1);
 }
 const noop = () => {};
@@ -295,9 +312,12 @@ function update(dt) {
     let alive = 0;
     for (const b of balls) {
       if (!b.active || b.landed) { if (!b.active) alive++; continue; }
-      if (moveBall(b, dt, onRealHit) === 'floor') {
+      const res = moveBall(b, dt, onRealHit);
+      if (res === 'floor') {
         b.landed = true; b.vx = b.vy = 0;
         if (landedX === null) landedX = b.x;
+      } else if (res === 'dead') {
+        b.landed = true; b.gone = true; b.vx = b.vy = 0;
       } else alive++;
     }
     if (alive === 0 && toFire === 0) { state = 'gather'; gatherT = 0; }
@@ -306,7 +326,9 @@ function update(dt) {
     // slide landed balls to the first landing spot, then start the next round
     gatherT += dt;
     let done = true;
+    if (landedX === null) landedX = launchX;     // every ball was eaten
     for (const b of balls) {
+      if (b.gone) continue;
       const d = landedX - b.x;
       if (Math.abs(d) > 2) { b.x += Math.sign(d) * Math.min(Math.abs(d), 2400 * dt); done = false; }
     }
@@ -377,6 +399,16 @@ function draw() {
       ctx.fillStyle = brickColor(cell.hp);
       roundRect(x + PAD, y + PAD, CELL - 2 * PAD, CELL - 2 * PAD, 12); ctx.fill();
       if (cell.flash > 0) { ctx.fillStyle = 'rgba(255,255,255,' + cell.flash * .6 + ')'; ctx.fill(); }
+      if (cell.acid) {
+        ctx.fillStyle = 'rgba(110,255,40,.5)'; roundRect(x + PAD, y + PAD, CELL - 2 * PAD, CELL - 2 * PAD, 12); ctx.fill();
+        ctx.strokeStyle = '#8dff3c'; ctx.lineWidth = 4; ctx.stroke();
+        ctx.fillStyle = 'rgba(220,255,160,.85)';
+        const t = performance.now() / 600;
+        for (let i = 0; i < 4; i++) {
+          const bx = x + 20 + i * 20, by = y + CELL - 14 - ((t + i * .37) % 1) * 56;
+          ctx.beginPath(); ctx.arc(bx, by, 3 + i % 2 * 2, 0, 6.283); ctx.fill();
+        }
+      }
       ctx.fillStyle = 'rgba(0,0,0,.65)'; ctx.fillText(cell.hp, x + CELL / 2, y + CELL / 2 + 2);
     }
   }
@@ -393,7 +425,7 @@ function draw() {
     ctx.fillStyle = '#aab'; ctx.font = '700 22px system-ui,sans-serif';
     ctx.fillText('×' + ballCount, Math.min(W - 30, Math.max(30, launchX)), FLOOR + 24);
   } else {
-    for (const b of balls) if (b.active || b.landed) { ctx.fillStyle = '#fff'; ball(b.x, b.y); }
+    for (const b of balls) if ((b.active || b.landed) && !b.gone) { ctx.fillStyle = '#fff'; ball(b.x, b.y); }
     if (state === 'shoot' && toFire > 0) { ctx.fillStyle = '#fff'; ball(launchX, FLOOR - R); }
   }
 
