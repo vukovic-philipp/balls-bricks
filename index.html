@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#12141f">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Balls &amp; Bricks</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <header id="hud">
+    <div class="stat"><span class="label">Round</span><span id="round">1</span></div>
+    <div class="stat"><span class="label">Best</span><span id="best">0</span></div>
+    <div class="stat"><span class="label">Balls</span><span id="balls">1</span></div>
+    <button id="speed" aria-label="Toggle fast forward">1×</button>
+  </header>
+  <main id="stage"><canvas id="game"></canvas></main>
+  <button id="recall" hidden>Recall balls</button>
+  <div id="overlay" hidden>
+    <div class="card">
+      <h1 id="ov-title">Game over</h1>
+      <p id="ov-text"></p>
+      <button id="restart">Play again</button>
+    </div>
+  </div>
+</div>
+<script src="game.js"></script>
+</body>
+</html>
