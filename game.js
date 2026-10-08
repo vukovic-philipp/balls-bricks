@@ -26,7 +26,7 @@ let round, ballCount, launchX, best = 0;
 let grid;             // grid[row][col] = {type:'brick',hp,flash} | {type:'ball'} | null
 let balls, toFire, fireTimer, landedX, shotTime, collected;
 let particles = [], fast = false;
-let aim = null;       // {x, y, id, t0x, t0y} while a finger is down
+let aim = null;       // {id} while a finger is down
 let aimT = { x: W / 2, y: 300 };   // persistent aim point (world coords)
 let scale = 1;
 
@@ -117,16 +117,16 @@ function fire(dx, dy) {
   elBalls.textContent = '0/' + ballCount;
 }
 
-// Relative aiming: the aim point (aimT, world coords) persists between shots and is nudged by
-// finger movement, so it never jumps and the finger doesn't have to cover the target.
+// Direct aiming: the line runs from the ball through the aim point (the finger). The aim
+// point persists after release, so the line stays visible between shots.
 function clampAimT() {
   aimT.x = Math.max(0, Math.min(W, aimT.x));
-  aimT.y = Math.max(40, Math.min(FLOOR - 160, aimT.y));
+  aimT.y = Math.max(0, Math.min(FLOOR - R, aimT.y));
 }
 function aimVector() {
   const dx = aimT.x - launchX, dy = (FLOOR - R) - aimT.y;   // dy>0 = upward
-  let a = Math.atan2(dy, dx);
   const lim = Math.asin(MIN_SIN * 1.4);
+  let a = dy > 0 ? Math.atan2(dy, dx) : (dx >= 0 ? lim : Math.PI - lim);
   a = Math.max(lim, Math.min(Math.PI - lim, a));
   return { dx: Math.cos(a), dy: -Math.sin(a) };
 }
@@ -314,26 +314,29 @@ function ball(x, y) { ctx.beginPath(); ctx.arc(x, y, R, 0, 6.283); ctx.fill(); }
 
 function drawPreview(v) {
   const g = { x: launchX, y: FLOOR - R, vx: v.dx * SPEED, vy: v.dy * SPEED };
-  let travelled = 0, nextDot = 0, hitAt = -1;
-  ctx.lineWidth = 3;
-  for (let i = 0; i < 2000 && travelled < 2200; i++) {
+  let travelled = 0, hitAt = -1, hitX = 0, hitY = 0;
+  const pts = [[g.x, g.y]], rebound = [];
+  for (let i = 0; i < 2000 && travelled < 2400; i++) {
     const px = g.x, py = g.y;
     stopFlag = false;
     const res = moveBall(g, 1 / 120, noopStop);
     travelled += Math.hypot(g.x - px, g.y - py);
-    if (stopFlag && hitAt < 0) {                       // first brick: mark impact, keep drawing the rebound
-      hitAt = travelled;
-      ctx.strokeStyle = '#ffd24a'; ctx.beginPath(); ctx.arc(g.x, g.y, R + 4, 0, 6.283); ctx.stroke();
-    }
+    if (stopFlag && hitAt < 0) { hitAt = travelled; hitX = g.x; hitY = g.y; rebound.push([g.x, g.y]); }
+    (hitAt < 0 ? pts : rebound).push([g.x, g.y]);
     if (res === 'floor') break;
-    if (hitAt >= 0 && travelled - hitAt > 350) break;  // rebound is only a hint
-    if (travelled >= nextDot) {
-      ctx.fillStyle = hitAt < 0 ? 'rgba(255,255,255,.9)' : 'rgba(255,210,74,.55)';
-      ctx.beginPath(); ctx.arc(g.x, g.y, hitAt < 0 ? 5 : 4, 0, 6.283); ctx.fill();
-      nextDot += 34;
-    }
+    if (hitAt >= 0 && travelled - hitAt > 400) break;  // rebound is only a hint
   }
   stopFlag = false;
+  const line = (arr, color, w) => {
+    ctx.strokeStyle = color; ctx.lineWidth = w; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.beginPath(); arr.forEach((q, i) => i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1])); ctx.stroke();
+  };
+  line(pts, 'rgba(255,255,255,.85)', 4);
+  if (hitAt >= 0) {
+    line(rebound, 'rgba(255,210,74,.5)', 3);
+    ctx.strokeStyle = '#ffd24a'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(hitX, hitY, R + 4, 0, 6.283); ctx.stroke();
+  }
 }
 let stopFlag = false;
 function noopStop(cell) { if (cell.type === 'brick') stopFlag = true; }   // flag the first brick contact
@@ -354,23 +357,28 @@ window.addEventListener('orientationchange', () => setTimeout(resize, 150));
 // ---- Input ------------------------------------------------------------
 // Listen on the whole page so touches in the letterbox or next to the canvas still aim.
 const stageEl = $('stage');
+function setAimFromPointer(e) {
+  const rect = canvas.getBoundingClientRect();
+  aimT.x = (e.clientX - rect.left) / scale;
+  aimT.y = (e.clientY - rect.top) / scale;
+  clampAimT();
+}
 stageEl.addEventListener('pointerdown', e => {
   if (state !== 'aim' || aim) return;
-  aim = { x: e.clientX, y: e.clientY, id: e.pointerId, t0x: aimT.x, t0y: aimT.y };
+  aim = { id: e.pointerId };
   try { stageEl.setPointerCapture(e.pointerId); } catch (err) {}
+  setAimFromPointer(e);
   e.preventDefault();
 });
 stageEl.addEventListener('pointermove', e => {
   if (!aim || e.pointerId !== aim.id) return;
-  aimT.x = aim.t0x + (e.clientX - aim.x) / scale;
-  aimT.y = aim.t0y + (e.clientY - aim.y) / scale;
-  clampAimT();
+  setAimFromPointer(e);
   e.preventDefault();
 });
 function release(e, cancel) {
   if (!aim || e.pointerId !== aim.id) return;
   aim = null;
-  if (!cancel && state === 'aim') { const v = aimVector(); fire(v.dx, v.dy); }
+  if (!cancel && state === 'aim') { setAimFromPointer(e); const v = aimVector(); fire(v.dx, v.dy); }
 }
 stageEl.addEventListener('pointerup', e => release(e, false));
 stageEl.addEventListener('pointercancel', e => release(e, true));
