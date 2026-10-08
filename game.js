@@ -116,14 +116,17 @@ function fire(dx, dy) {
   elBalls.textContent = '0/' + ballCount;
 }
 
-// Clamp direction: must point upward and not be too flat. Returns {dx,dy} or null.
+// Direct aiming: the ball shoots towards the touch point. Releasing near/below the
+// floor line cancels the shot. Returns a unit {dx,dy} (dy<0 = up) or null.
 function aimVector(px, py) {
-  const dx = aim.sx - px, dy = py - aim.sy;                // slingshot: pull down/back, shoot the opposite way (dy>0 = upward shot)
-  if (Math.hypot(dx, dy) < MIN_PULL || dy <= 0) return null;
-  let a = Math.atan2(dy, dx);                              // dy>0 means "up" after flip
+  const rect = canvas.getBoundingClientRect();
+  const wx = (px - rect.left) / scale, wy = (py - rect.top) / scale;
+  const dx = wx - launchX, dy = (FLOOR - R) - wy;          // dy>0 = upward
+  if (dy < 60 || Math.hypot(dx, dy) < 60) return null;
+  let a = Math.atan2(dy, dx);
   const lim = Math.asin(MIN_SIN * 1.4);
   a = Math.max(lim, Math.min(Math.PI - lim, a));
-  return { dx: Math.cos(a), dy: -Math.sin(a) };            // screen-space: up is negative y
+  return { dx: Math.cos(a), dy: -Math.sin(a) };
 }
 
 // ---- Physics ----------------------------------------------------------
@@ -340,14 +343,16 @@ window.addEventListener('resize', resize);
 window.addEventListener('orientationchange', () => setTimeout(resize, 150));
 
 // ---- Input ------------------------------------------------------------
-canvas.addEventListener('pointerdown', e => {
-  if (state !== 'aim') return;
-  canvas.setPointerCapture(e.pointerId);
-  aim = { sx: e.clientX, sy: e.clientY, x: e.clientX, y: e.clientY, id: e.pointerId };
+// Listen on the whole page so touches in the letterbox or next to the canvas still aim.
+const stageEl = $('stage');
+stageEl.addEventListener('pointerdown', e => {
+  if (state !== 'aim' || aim) return;
+  aim = { x: e.clientX, y: e.clientY, id: e.pointerId };
+  try { stageEl.setPointerCapture(e.pointerId); } catch (err) {}
   e.preventDefault();
 });
-canvas.addEventListener('pointermove', e => {
-  if (aim && e.pointerId === aim.id) { aim.x = e.clientX; aim.y = e.clientY; }
+stageEl.addEventListener('pointermove', e => {
+  if (aim && e.pointerId === aim.id) { aim.x = e.clientX; aim.y = e.clientY; e.preventDefault(); }
 });
 function release(e, cancel) {
   if (!aim || e.pointerId !== aim.id) return;
@@ -355,9 +360,9 @@ function release(e, cancel) {
   aim = null;
   if (v) fire(v.dx, v.dy);
 }
-canvas.addEventListener('pointerup', e => release(e, false));
-canvas.addEventListener('pointercancel', e => release(e, true));
-canvas.addEventListener('contextmenu', e => e.preventDefault());
+stageEl.addEventListener('pointerup', e => release(e, false));
+stageEl.addEventListener('pointercancel', e => release(e, true));
+stageEl.addEventListener('contextmenu', e => e.preventDefault());
 document.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
 
 elSpeed.addEventListener('click', () => { fast = !fast; elSpeed.textContent = fast ? '3×' : '1×'; elSpeed.classList.toggle('on', fast); });

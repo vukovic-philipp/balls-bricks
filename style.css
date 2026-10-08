@@ -12,7 +12,7 @@ button { font:inherit; color:var(--text); background:#2b3050; border:0; border-r
 button:active { background:#3a4070; }
 #speed { min-width:52px; padding:8px 12px; }
 #speed.on { background:var(--accent); }
-#stage { flex:1; min-height:0; display:flex; align-items:center; justify-content:center; }
+#stage { touch-action:none; flex:1; min-height:0; display:flex; align-items:center; justify-content:center; }
 canvas { display:block; touch-action:none; }
 #recall { position:absolute; right:14px; bottom:calc(14px + env(safe-area-inset-bottom)); font-size:13px; padding:8px 12px; opacity:.9; }
 #recall[hidden], #overlay[hidden] { display:none; }
